@@ -1,47 +1,69 @@
 # agent-tools-mvp
 
-Initial TypeScript scaffold for an AI-agent tool server.
+Minimal TypeScript tool server for agent-facing backend tools.
 
-## Tools (placeholders)
+## Implemented tools
 
-- `supabase_run_sql`
-- `github_upsert_file`
+- `supabase_run_sql` (working, sandbox-only)
+- `github_upsert_file` (placeholder)
 
-Both tools intentionally return "not implemented" responses right now.
+## Safety behavior for `supabase_run_sql`
 
-## Project structure
+- Requires `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_SANDBOX_PROJECT_REF`.
+- Rejects requests when `SUPABASE_URL` project ref does not match `SUPABASE_SANDBOX_PROJECT_REF`.
+- Rejects destructive SQL patterns:
+  - `DROP`
+  - `TRUNCATE`
+  - `DELETE` without a `WHERE` clause
 
-```text
-agent-tools-mvp/
-├── .env.example
-├── package.json
-├── README.md
-├── tsconfig.json
-└── src/
-    ├── server.ts
-    └── tools/
-        ├── github.ts
-        └── supabase.ts
-```
-
-## Quick start
+## Setup
 
 ```bash
 cd agent-tools-mvp
+cp .env.example .env
 npm install
 npm run dev
 ```
 
-Then call the local endpoint:
+Set the following values in `.env`:
+
+- `SUPABASE_URL=https://<project-ref>.supabase.co`
+- `SUPABASE_SERVICE_ROLE_KEY=<service-role-key>`
+- `SUPABASE_SANDBOX_PROJECT_REF=<project-ref>`
+
+## Endpoint
+
+- `POST /tools/run`
+
+### Sample request body
+
+```json
+{
+  "tool": "supabase_run_sql",
+  "input": {
+    "sql": "select now() as server_time"
+  }
+}
+```
+
+### Example curl
 
 ```bash
 curl -X POST http://localhost:3000/tools/run \
   -H 'content-type: application/json' \
-  -d '{"tool":"supabase_run_sql","input":{"sql":"select 1"}}'
+  -d '{
+    "tool": "supabase_run_sql",
+    "input": { "sql": "select now() as server_time" }
+  }'
 ```
 
-## Safety notes
+### Response shape
 
-- This is an MVP scaffold only.
-- No production-safe execution logic is implemented yet.
-- Add strict validation, authZ/authN, allow-lists, and auditing before real use.
+```json
+{
+  "success": true,
+  "message": "Query executed successfully",
+  "data": [{ "server_time": "2026-04-08T00:00:00.000Z" }],
+  "error": null
+}
+```
