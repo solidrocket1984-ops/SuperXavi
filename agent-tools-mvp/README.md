@@ -31,11 +31,13 @@ Set the following values in `.env`:
 - `SUPABASE_SERVICE_ROLE_KEY=<service-role-key>`
 - `SUPABASE_SANDBOX_PROJECT_REF=<project-ref>`
 
-## Endpoint
+## Endpoints
 
-- `POST /tools/run`
+### Tool execution contract (new)
 
-### Sample request body
+- `POST /execute`
+
+Request body:
 
 ```json
 {
@@ -46,24 +48,43 @@ Set the following values in `.env`:
 }
 ```
 
-### Example curl
+`tool` must be one of:
+
+- `supabase_run_sql`
+- `github_upsert_file`
+
+All tool responses are normalized to:
+
+```json
+{
+  "success": true,
+  "message": "Tool-specific message",
+  "data": {},
+  "error": null
+}
+```
+
+### Existing endpoints (kept)
+
+- `POST /tools/run` (legacy multi-tool endpoint, same body as `/execute`)
+- `POST /tools/supabase/run-sql` (direct endpoint, body is tool `input` object)
+- `POST /tools/github/upsert-file` (direct endpoint, body is tool `input` object)
+
+## Validation and errors
+
+- Invalid JSON returns `400` with `{"success": false, ...}`.
+- Schema validation failures return `400` with a clear field-level message.
+- Unsupported routes return `404`.
+- Non-`POST` requests return `405`.
+- Unhandled server errors return `500` with normalized error shape.
+
+## Example curl
 
 ```bash
-curl -X POST http://localhost:3000/tools/run \
+curl -X POST http://localhost:3000/execute \
   -H 'content-type: application/json' \
   -d '{
     "tool": "supabase_run_sql",
     "input": { "sql": "select now() as server_time" }
   }'
-```
-
-### Response shape
-
-```json
-{
-  "success": true,
-  "message": "Query executed successfully",
-  "data": [{ "server_time": "2026-04-08T00:00:00.000Z" }],
-  "error": null
-}
 ```
