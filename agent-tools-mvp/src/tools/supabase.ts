@@ -1,3 +1,5 @@
+import { EnvHttpProxyAgent, fetch as undiciFetch } from "undici";
+
 export interface SupabaseRunSqlInput {
   sql: string;
 }
@@ -12,6 +14,8 @@ export interface ToolResponse<TData = unknown> {
 interface PgQueryResponseRow {
   [key: string]: unknown;
 }
+
+const proxyAgent = new EnvHttpProxyAgent();
 
 const DESTRUCTIVE_SQL_PATTERNS: ReadonlyArray<RegExp> = [
   /\bdrop\b/i,
@@ -72,7 +76,8 @@ export async function supabaseRunSql(
     const serviceRoleKey = getRequiredEnv("SUPABASE_SERVICE_ROLE_KEY");
     assertSandboxProject(supabaseUrl);
 
-    const response = await fetch(`${supabaseUrl}/pg/v1/query`, {
+    const response = await undiciFetch(`${supabaseUrl}/pg/v1/query`, {
+      dispatcher: proxyAgent,
       method: "POST",
       headers: {
         "content-type": "application/json",
