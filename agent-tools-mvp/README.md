@@ -5,7 +5,7 @@ Minimal TypeScript tool server for agent-facing backend tools.
 ## Implemented tools
 
 - `supabase_run_sql` (working, sandbox-only)
-- `github_upsert_file` (placeholder)
+- `github_upsert_file` (placeholder with input validation)
 
 ## Safety behavior for `supabase_run_sql`
 
@@ -31,9 +31,10 @@ Set the following values in `.env`:
 - `SUPABASE_SERVICE_ROLE_KEY=<service-role-key>`
 - `SUPABASE_SANDBOX_PROJECT_REF=<project-ref>`
 
-## Endpoint
+## Endpoints
 
-- `POST /tools/run`
+- `POST /execute` (current)
+- `POST /tools/run` (legacy alias; same behavior and response contract)
 
 ### Sample request body
 
@@ -46,7 +47,18 @@ Set the following values in `.env`:
 }
 ```
 
-### Example curl
+### Example curl (current endpoint)
+
+```bash
+curl -X POST http://localhost:3000/execute \
+  -H 'content-type: application/json' \
+  -d '{
+    "tool": "supabase_run_sql",
+    "input": { "sql": "select now() as server_time" }
+  }'
+```
+
+### Example curl (legacy alias)
 
 ```bash
 curl -X POST http://localhost:3000/tools/run \

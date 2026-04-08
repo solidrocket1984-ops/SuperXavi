@@ -23,12 +23,46 @@ export interface GithubUpsertFileData {
   contentSha?: string;
 }
 
+function validateInput(input: GithubUpsertFileInput): string | null {
+  if (!input || typeof input !== "object") {
+    return "Input is required";
+  }
+
+  const requiredFields: Array<keyof GithubUpsertFileInput> = [
+    "owner",
+    "repo",
+    "branch",
+    "path",
+    "content",
+    "message",
+  ];
+
+  for (const field of requiredFields) {
+    const value = input[field];
+    if (typeof value !== "string" || value.trim() === "") {
+      return `Field '${field}' must be a non-empty string`;
+    }
+  }
+
+  return null;
+}
+
 export async function githubUpsertFile(
   input: GithubUpsertFileInput,
 ): Promise<ToolResponse<GithubUpsertFileData>> {
   // TODO: Validate repository and path against explicit allow-lists.
   // TODO: Integrate GitHub API client and handle create-vs-update semantics.
   // TODO: Add dry-run mode, conflict handling, and audit logging.
+
+  const validationError = validateInput(input);
+  if (validationError) {
+    return {
+      success: false,
+      message: "Validation failed",
+      data: null,
+      error: validationError,
+    };
+  }
 
   return {
     success: false,
