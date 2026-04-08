@@ -17,12 +17,6 @@ interface PgQueryResponseRow {
 
 const proxyAgent = new EnvHttpProxyAgent();
 
-const DESTRUCTIVE_SQL_PATTERNS: ReadonlyArray<RegExp> = [
-  /\bdrop\b/i,
-  /\btruncate\b/i,
-  /\bdelete\b(?!\s+from\s+.+\s+where\b)/i,
-];
-
 function getRequiredEnv(name: "SUPABASE_URL" | "SUPABASE_SERVICE_ROLE_KEY"): string {
   const value = process.env[name]?.trim();
   if (!value) {
@@ -45,9 +39,16 @@ function assertSandboxProject(supabaseUrl: string): void {
   }
 }
 
-function isBlockedSql(sql: string): boolean {
-  const normalizedSql = sql.replace(/--.*$/gm, " ").replace(/\s+/g, " ").trim();
-  return DESTRUCTIVE_SQL_PATTERNS.some((pattern) => pattern.test(normalizedSql));
+function parseJsonSafely(rawBody: string): unknown {
+  if (!rawBody.trim()) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(rawBody);
+  } catch {
+    return rawBody;
+  }
 }
 
 export async function supabaseRunSql(
@@ -62,21 +63,12 @@ export async function supabaseRunSql(
     };
   }
 
-  if (isBlockedSql(input.sql)) {
-    return {
-      success: false,
-      message: "Blocked potentially destructive SQL",
-      data: null,
-      error: "DROP, TRUNCATE, and DELETE without WHERE are not allowed",
-    };
-  }
-
   try {
     const supabaseUrl = getRequiredEnv("SUPABASE_URL");
     const serviceRoleKey = getRequiredEnv("SUPABASE_SERVICE_ROLE_KEY");
     assertSandboxProject(supabaseUrl);
 
-    const response = await undiciFetch(`${supabaseUrl}/pg/v1/query`, {
+    const response = await undiciFetch(`${supabaseUrl}/rest/v1/rpc/health_check`, {
       dispatcher: proxyAgent,
       method: "POST",
       headers: {
@@ -84,30 +76,39 @@ export async function supabaseRunSql(
         apikey: serviceRoleKey,
         authorization: `Bearer ${serviceRoleKey}`,
       },
-      body: JSON.stringify({ query: input.sql }),
+      body: JSON.stringify({}),
     });
 
+    const rawBody = await response.text();
+    const parsedBody = parseJsonSafely(rawBody);
+
     if (!response.ok) {
-      const errorText = await response.text();
+      const errorText =
+        typeof parsedBody === "string"
+          ? parsedBody
+          : JSON.stringify(parsedBody) || `HTTP ${response.status}`;
       return {
         success: false,
-        message: "Supabase query failed",
+        message: "Supabase RPC failed",
         data: null,
         error: errorText || `HTTP ${response.status}`,
       };
     }
 
-    const payload = (await response.json()) as PgQueryResponseRow[];
+    const payload = Array.isArray(parsedBody)
+      ? (parsedBody as PgQueryResponseRow[])
+      : ([parsedBody] as PgQueryResponseRow[]);
+
     return {
       success: true,
-      message: "Query executed successfully",
+      message: "Health check RPC executed successfully",
       data: payload,
       error: null,
     };
   } catch (error) {
     return {
       success: false,
-      message: "Supabase query failed",
+      message: "Supabase RPC failed",
       data: null,
       error: error instanceof Error ? error.message : "Unknown error",
     };
