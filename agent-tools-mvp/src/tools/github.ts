@@ -6,7 +6,7 @@
  * - Add path restrictions, content scanning, and commit attribution rules.
  */
 
-import type { ToolResult } from "./supabase.js";
+import type { ToolResponse } from "./supabase.js";
 
 export interface GithubUpsertFileInput {
   owner: string;
@@ -25,19 +25,15 @@ export interface GithubUpsertFileData {
 
 export async function githubUpsertFile(
   input: GithubUpsertFileInput,
-): Promise<ToolResult<GithubUpsertFileData>> {
+): Promise<ToolResponse<GithubUpsertFileData>> {
   // TODO: Validate repository and path against explicit allow-lists.
   // TODO: Integrate GitHub API client and handle create-vs-update semantics.
   // TODO: Add dry-run mode, conflict handling, and audit logging.
 
   return {
-    ok: false,
-    error: "Not implemented: github_upsert_file placeholder",
-    meta: {
-      tool: "github_upsert_file",
-      target: `${input.owner}/${input.repo}`,
-      branch: input.branch,
-      path: input.path,
-    },
+    success: false,
+    message: "Not implemented",
+    data: null,
+    error: `Not implemented: github_upsert_file placeholder for ${input.owner}/${input.repo}`,
   };
 }
