@@ -143,7 +143,7 @@ export async function supabaseFetchWorkspace(
   try {
     const { supabaseUrl, serviceRoleKey } = getSupabaseConfig();
     const response = await undiciFetch(
-      `${supabaseUrl}/rest/v1/workspaces?id=eq.${encodeURIComponent(workspaceId)}&select=*`,
+      `${supabaseUrl}/rest/v1/client_workspaces?id=eq.${encodeURIComponent(workspaceId)}&select=id,status,company_name,lead_id,product_id,selected_plan,selected_modules,assistant_id,active_assistant_version_id,metadata,updated_at`,
       {
         dispatcher: proxyAgent,
         method: "GET",

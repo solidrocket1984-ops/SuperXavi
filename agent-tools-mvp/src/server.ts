@@ -128,7 +128,19 @@ function normalizeStep(
 }
 
 function toWorkspaceSummary(workspace: Record<string, unknown>): Record<string, unknown> {
-  const summaryKeys = ["id", "name", "slug", "status", "created_at", "updated_at"] as const;
+  const summaryKeys = [
+    "id",
+    "status",
+    "company_name",
+    "lead_id",
+    "product_id",
+    "selected_plan",
+    "selected_modules",
+    "assistant_id",
+    "active_assistant_version_id",
+    "metadata",
+    "updated_at",
+  ] as const;
   const summary = summaryKeys.reduce<Record<string, unknown>>((acc, key) => {
     if (workspace[key] !== undefined) {
       acc[key] = workspace[key];
