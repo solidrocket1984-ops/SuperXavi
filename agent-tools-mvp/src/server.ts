@@ -14,6 +14,12 @@ interface OrchestrateDemoRequestBody {
   path: string;
 }
 
+interface ProvisionRespondeyaWebRequestBody {
+  workspaceId: string;
+  repo: string;
+  path: string;
+}
+
 interface OrchestrateDemoStep {
   tool: "supabase_run_sql" | "github_upsert_file";
   success: boolean;
@@ -27,9 +33,26 @@ interface OrchestrateDemoData {
   summary: string;
 }
 
+interface OrchestrationStep {
+  tool: SupportedToolName;
+  success: boolean;
+  message: string;
+  data: unknown;
+  error: string | null;
+}
+
+interface ProvisionRespondeyaWebData {
+  workspaceId: string;
+  steps: OrchestrationStep[];
+  summary: string;
+}
+
 const PRIMARY_EXECUTE_PATH = "/execute";
 const LEGACY_EXECUTE_PATH = "/tools/run";
 const ORCHESTRATE_DEMO_PATH = "/orchestrate/demo";
+const ORCHESTRATE_PROVISION_RESPONDEYA_WEB_PATH = "/orchestrate/provision-respondeya-web";
+const UUID_V4_OR_ANY_UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function parsePort(raw?: string): number {
   const port = Number(raw ?? 3000);
@@ -56,6 +79,14 @@ function isOrchestrateDemoRoute(method?: string, url?: string): boolean {
   }
 
   return new URL(url, "http://localhost").pathname === ORCHESTRATE_DEMO_PATH;
+}
+
+function isProvisionRespondeyaWebRoute(method?: string, url?: string): boolean {
+  if (method !== "POST" || !url) {
+    return false;
+  }
+
+  return new URL(url, "http://localhost").pathname === ORCHESTRATE_PROVISION_RESPONDEYA_WEB_PATH;
 }
 
 function invalidRequestBodyResponse(res: ServerResponse, error: string): void {
@@ -86,9 +117,9 @@ async function runTool(body: ToolRequestBody): Promise<ToolResponse> {
 }
 
 function normalizeStep(
-  tool: OrchestrateDemoStep["tool"],
+  tool: SupportedToolName,
   response: ToolResponse,
-): OrchestrateDemoStep {
+): OrchestrationStep {
   return {
     tool,
     success: response.success,
@@ -104,6 +135,31 @@ function validateOrchestrateDemoBody(body: unknown): string | null {
   }
 
   const candidate = body as Partial<OrchestrateDemoRequestBody>;
+  if (typeof candidate.repo !== "string" || candidate.repo.trim() === "") {
+    return "Field 'repo' must be a non-empty string";
+  }
+
+  if (typeof candidate.path !== "string" || candidate.path.trim() === "") {
+    return "Field 'path' must be a non-empty string";
+  }
+
+  return null;
+}
+
+function validateProvisionRespondeyaWebBody(body: unknown): string | null {
+  if (!body || typeof body !== "object") {
+    return "Request body is required";
+  }
+
+  const candidate = body as Partial<ProvisionRespondeyaWebRequestBody>;
+  if (typeof candidate.workspaceId !== "string" || candidate.workspaceId.trim() === "") {
+    return "Field 'workspaceId' must be a non-empty string";
+  }
+
+  if (!UUID_V4_OR_ANY_UUID_REGEX.test(candidate.workspaceId.trim())) {
+    return "Field 'workspaceId' must be a valid UUID";
+  }
+
   if (typeof candidate.repo !== "string" || candidate.repo.trim() === "") {
     return "Field 'repo' must be a non-empty string";
   }
@@ -171,6 +227,57 @@ async function orchestrateDemo(input: OrchestrateDemoRequestBody): Promise<ToolR
   };
 }
 
+async function orchestrateProvisionRespondeyaWeb(
+  input: ProvisionRespondeyaWebRequestBody,
+): Promise<ToolResponse<ProvisionRespondeyaWebData>> {
+  const orchestrationName = "provision-respondeya-web";
+  const supabaseResult = await supabaseRunSql({ sql: "select now() as server_time" });
+  const step1 = normalizeStep("supabase_run_sql", supabaseResult);
+
+  if (!supabaseResult.success) {
+    return {
+      success: false,
+      message: "Provision orchestration failed",
+      data: {
+        workspaceId: input.workspaceId,
+        steps: [step1],
+        summary: "Step 1 failed; Step 2 not executed.",
+      },
+      error: "supabase_run_sql failed",
+    };
+  }
+
+  const githubPayload = {
+    workspaceId: input.workspaceId,
+    orchestration: orchestrationName,
+    timestamp: new Date().toISOString(),
+    status: "completed",
+    supabaseHealthResult: supabaseResult.data,
+    note: "This is the first business provisioning orchestration",
+  };
+
+  const githubResult = await githubUpsertFile({
+    repo: input.repo,
+    path: input.path,
+    content: JSON.stringify(githubPayload, null, 2) + "\n",
+    message: `chore: record ${orchestrationName} run for ${input.workspaceId}`,
+  });
+  const step2 = normalizeStep("github_upsert_file", githubResult);
+
+  return {
+    success: githubResult.success,
+    message: githubResult.success ? "Provision orchestration completed successfully" : "Provision orchestration failed",
+    data: {
+      workspaceId: input.workspaceId,
+      steps: [step1, step2],
+      summary: githubResult.success
+        ? "Step 1 succeeded; Step 2 succeeded."
+        : "Step 1 succeeded; Step 2 failed.",
+    },
+    error: githubResult.success ? null : "github_upsert_file failed",
+  };
+}
+
 const server = createServer(async (req, res) => {
   if (isExecuteRoute(req.method, req.url)) {
     let body: unknown;
@@ -223,6 +330,26 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  if (isProvisionRespondeyaWebRoute(req.method, req.url)) {
+    let body: unknown;
+    try {
+      body = await readJsonBody(req);
+    } catch {
+      invalidRequestBodyResponse(res, "Invalid JSON body");
+      return;
+    }
+
+    const validationError = validateProvisionRespondeyaWebBody(body);
+    if (validationError) {
+      invalidRequestBodyResponse(res, validationError);
+      return;
+    }
+
+    const result = await orchestrateProvisionRespondeyaWeb(body as ProvisionRespondeyaWebRequestBody);
+    jsonResponse(res, result.success ? 200 : 400, result);
+    return;
+  }
+
   jsonResponse(res, 404, {
     success: false,
     message: "Not found",
@@ -235,6 +362,6 @@ const port = parsePort(process.env.PORT);
 server.listen(port, () => {
   // eslint-disable-next-line no-console
   console.log(
-    `agent-tools-mvp listening on http://localhost:${port} (POST ${PRIMARY_EXECUTE_PATH}, POST ${ORCHESTRATE_DEMO_PATH}, legacy: ${LEGACY_EXECUTE_PATH})`,
+    `agent-tools-mvp listening on http://localhost:${port} (POST ${PRIMARY_EXECUTE_PATH}, POST ${ORCHESTRATE_DEMO_PATH}, POST ${ORCHESTRATE_PROVISION_RESPONDEYA_WEB_PATH}, legacy: ${LEGACY_EXECUTE_PATH})`,
   );
 });
