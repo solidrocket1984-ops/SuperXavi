@@ -2,19 +2,6 @@
 
 Minimal TypeScript tool server for agent-facing backend tools.
 
-## Implemented tools
-
-- `supabase_run_sql` (RPC-backed health check, sandbox-only)
-- `github_upsert_file` (placeholder with input validation)
-
-## Safety behavior for `supabase_run_sql`
-
-- Requires `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_SANDBOX_PROJECT_REF`.
-- Rejects requests when `SUPABASE_URL` project ref does not match `SUPABASE_SANDBOX_PROJECT_REF`.
-- Uses Supabase REST RPC (`POST /rest/v1/rpc/health_check`) instead of arbitrary SQL execution.
-- Supabase REST is designed around tables, views, and functions. For this MVP, `supabase_run_sql` maps to a controlled RPC function call.
-- Raw arbitrary SQL should be handled later through a safer server-side path (e.g. migrations, secured internal services, or carefully controlled internal functions).
-
 ## Setup
 
 ```bash
@@ -24,51 +11,50 @@ npm install
 npm run dev
 ```
 
-Set the following values in `.env`:
+## Main interface: `POST /execute`
 
-- `SUPABASE_URL=https://<project-ref>.supabase.co`
-- `SUPABASE_SERVICE_ROLE_KEY=<service-role-key>`
-- `SUPABASE_SANDBOX_PROJECT_REF=<project-ref>`
+`/execute` is the primary and recommended interface for all tool invocations.
 
-## Endpoints
-
-- `POST /execute` (current)
-- `POST /tools/run` (legacy alias; same behavior and response contract)
-
-### Sample request body
+### Request contract (exact)
 
 ```json
 {
-  "tool": "supabase_run_sql",
-  "input": {
-    "sql": "select now() as server_time"
-  }
+  "tool": "supabase_run_sql" | "github_upsert_file",
+  "input": { ... }
 }
 ```
 
-### Example curl (current endpoint)
+### Response contract (exact)
+
+```json
+{
+  "success": boolean,
+  "message": string,
+  "data": unknown,
+  "error": string | null
+}
+```
+
+## Legacy alias: `POST /tools/run`
+
+`/tools/run` is a legacy alias for `/execute` and has the same behavior and response contract. Prefer `/execute` for all new integrations.
+
+## Complete examples
+
+### Example: `supabase_run_sql`
 
 ```bash
 curl -X POST http://localhost:3000/execute \
   -H 'content-type: application/json' \
   -d '{
     "tool": "supabase_run_sql",
-    "input": { "sql": "select now() as server_time" }
+    "input": {
+      "sql": "select now() as server_time"
+    }
   }'
 ```
 
-### Example curl (legacy alias)
-
-```bash
-curl -X POST http://localhost:3000/tools/run \
-  -H 'content-type: application/json' \
-  -d '{
-    "tool": "supabase_run_sql",
-    "input": { "sql": "select now() as server_time" }
-  }'
-```
-
-### Response shape
+Example response:
 
 ```json
 {
@@ -78,3 +64,51 @@ curl -X POST http://localhost:3000/tools/run \
   "error": null
 }
 ```
+
+### Example: `github_upsert_file`
+
+```bash
+curl -X POST http://localhost:3000/execute \
+  -H 'content-type: application/json' \
+  -d '{
+    "tool": "github_upsert_file",
+    "input": {
+      "repo": "my-repo",
+      "path": "docs/agent-output.md",
+      "content": "# Agent output\n\nHello from agent-tools-mvp.\n",
+      "message": "docs: update agent output",
+      "branch": "main"
+    }
+  }'
+```
+
+Example response:
+
+```json
+{
+  "success": true,
+  "message": "File updated successfully",
+  "data": {
+    "commitSha": "abc123...",
+    "contentSha": "def456..."
+  },
+  "error": null
+}
+```
+
+## Tool catalog
+
+- `supabase_run_sql`: validates input and executes a controlled Supabase `health_check` RPC call (sandbox-only guardrails).
+  - Required env: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_SANDBOX_PROJECT_REF`
+- `github_upsert_file`: creates or updates a file in an allowlisted GitHub repository via the GitHub Contents API.
+  - Required env: `GITHUB_OWNER`, `GITHUB_TOKEN`, `GITHUB_ALLOWED_REPOS` (comma-separated)
+
+## Safety rules
+
+- Supabase sandbox restriction: requests are rejected unless `SUPABASE_URL` project ref matches `SUPABASE_SANDBOX_PROJECT_REF`.
+- GitHub repository allowlist: requests are rejected unless `input.repo` is present in `GITHUB_ALLOWED_REPOS`.
+- No destructive production behavior: this MVP is intentionally constrained to sandbox/allowlisted operations only.
+
+## Intended orchestrator flow
+
+A future OpenAI agent (orchestrator) decides which tool to call (`supabase_run_sql` or `github_upsert_file`) and sends a request to `POST /execute` using the request contract above; this server validates, runs the tool, and returns the standard response contract.
