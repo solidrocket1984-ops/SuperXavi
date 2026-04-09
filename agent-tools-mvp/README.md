@@ -39,6 +39,57 @@ npm run dev
 
 `/tools/run` is a legacy alias for `/execute` and has the same behavior and response contract. Prefer `/execute` for all new integrations.
 
+## Demo orchestration endpoint: `POST /orchestrate/demo`
+
+`/orchestrate/demo` is a demo-only endpoint that performs a deterministic 2-step orchestration:
+1. Run `supabase_run_sql` with the existing `health_check` RPC behavior.
+2. If step 1 succeeds, run `github_upsert_file` to create/update a file in an allowlisted repo.
+
+This endpoint is intentionally minimal and explicit for demonstration. It is **not** the final orchestration architecture.
+
+Request example:
+
+```json
+{
+  "repo": "SuperXavi",
+  "path": "agent-tools-mvp/docs/orchestrator-demo.txt"
+}
+```
+
+Response example:
+
+```json
+{
+  "success": true,
+  "message": "Demo orchestration completed successfully",
+  "data": {
+    "steps": [
+      {
+        "tool": "supabase_run_sql",
+        "success": true,
+        "message": "Health check RPC executed successfully",
+        "data": [{ "ok": true }],
+        "error": null
+      },
+      {
+        "tool": "github_upsert_file",
+        "success": true,
+        "message": "File updated successfully",
+        "data": {
+          "commitSha": "abc123...",
+          "contentSha": "def456..."
+        },
+        "error": null
+      }
+    ],
+    "summary": "Step 1 succeeded; Step 2 succeeded."
+  },
+  "error": null
+}
+```
+
+Future full orchestration is intended to live in SuperXavi. This repo remains the execution layer with `/execute` as the main low-level interface.
+
 ## Complete examples
 
 ### Example: `supabase_run_sql`
