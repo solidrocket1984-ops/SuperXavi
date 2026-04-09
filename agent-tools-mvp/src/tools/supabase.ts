@@ -4,6 +4,10 @@ export interface SupabaseRunSqlInput {
   sql: string;
 }
 
+export interface SupabaseFetchWorkspaceInput {
+  workspaceId: string;
+}
+
 export interface ToolResponse<TData = unknown> {
   success: boolean;
   message: string;
@@ -14,6 +18,8 @@ export interface ToolResponse<TData = unknown> {
 interface PgQueryResponseRow {
   [key: string]: unknown;
 }
+
+type WorkspaceRecord = Record<string, unknown>;
 
 const proxyAgent = new EnvHttpProxyAgent();
 
@@ -51,6 +57,13 @@ function parseJsonSafely(rawBody: string): unknown {
   }
 }
 
+function getSupabaseConfig(): { supabaseUrl: string; serviceRoleKey: string } {
+  const supabaseUrl = getRequiredEnv("SUPABASE_URL");
+  const serviceRoleKey = getRequiredEnv("SUPABASE_SERVICE_ROLE_KEY");
+  assertSandboxProject(supabaseUrl);
+  return { supabaseUrl, serviceRoleKey };
+}
+
 export async function supabaseRunSql(
   input: SupabaseRunSqlInput,
 ): Promise<ToolResponse<PgQueryResponseRow[]>> {
@@ -64,9 +77,7 @@ export async function supabaseRunSql(
   }
 
   try {
-    const supabaseUrl = getRequiredEnv("SUPABASE_URL");
-    const serviceRoleKey = getRequiredEnv("SUPABASE_SERVICE_ROLE_KEY");
-    assertSandboxProject(supabaseUrl);
+    const { supabaseUrl, serviceRoleKey } = getSupabaseConfig();
 
     const response = await undiciFetch(`${supabaseUrl}/rest/v1/rpc/health_check`, {
       dispatcher: proxyAgent,
@@ -109,6 +120,86 @@ export async function supabaseRunSql(
     return {
       success: false,
       message: "Supabase RPC failed",
+      data: null,
+      error: error instanceof Error ? error.message : "Unknown error",
+    };
+  }
+}
+
+export async function supabaseFetchWorkspace(
+  input: SupabaseFetchWorkspaceInput,
+): Promise<ToolResponse<WorkspaceRecord | null>> {
+  if (!input?.workspaceId || typeof input.workspaceId !== "string" || input.workspaceId.trim() === "") {
+    return {
+      success: false,
+      message: "Validation failed",
+      data: null,
+      error: "Input must include a non-empty workspaceId string",
+    };
+  }
+
+  const workspaceId = input.workspaceId.trim();
+
+  try {
+    const { supabaseUrl, serviceRoleKey } = getSupabaseConfig();
+    const response = await undiciFetch(
+      `${supabaseUrl}/rest/v1/workspaces?id=eq.${encodeURIComponent(workspaceId)}&select=*`,
+      {
+        dispatcher: proxyAgent,
+        method: "GET",
+        headers: {
+          apikey: serviceRoleKey,
+          authorization: `Bearer ${serviceRoleKey}`,
+          accept: "application/json",
+        },
+      },
+    );
+
+    const rawBody = await response.text();
+    const parsedBody = parseJsonSafely(rawBody);
+
+    if (!response.ok) {
+      const errorText =
+        typeof parsedBody === "string"
+          ? parsedBody
+          : JSON.stringify(parsedBody) || `HTTP ${response.status}`;
+      return {
+        success: false,
+        message: "Workspace lookup failed",
+        data: null,
+        error: errorText || `HTTP ${response.status}`,
+      };
+    }
+
+    if (!Array.isArray(parsedBody)) {
+      return {
+        success: false,
+        message: "Workspace lookup failed",
+        data: null,
+        error: "Unexpected Supabase response shape",
+      };
+    }
+
+    const workspace = (parsedBody[0] as WorkspaceRecord | undefined) ?? null;
+    if (!workspace) {
+      return {
+        success: false,
+        message: "Workspace not found",
+        data: null,
+        error: "Workspace does not exist",
+      };
+    }
+
+    return {
+      success: true,
+      message: "Workspace fetched successfully",
+      data: workspace,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      message: "Workspace lookup failed",
       data: null,
       error: error instanceof Error ? error.message : "Unknown error",
     };
