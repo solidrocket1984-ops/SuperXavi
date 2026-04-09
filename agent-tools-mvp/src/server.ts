@@ -2,12 +2,20 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { githubUpsertFile, type GithubUpsertFileInput } from "./tools/github.js";
 import {
   supabaseFetchWorkspace,
+  supabaseRecordProvisioningTrace,
   supabaseRunSql,
+  supabaseUpdateWorkspaceOrchestrationTrace,
+  type SupabaseRecordProvisioningTraceInput,
   type SupabaseRunSqlInput,
+  type SupabaseUpdateWorkspaceOrchestrationTraceInput,
   type ToolResponse,
 } from "./tools/supabase.js";
 
-type SupportedToolName = "supabase_run_sql" | "github_upsert_file";
+type SupportedToolName =
+  | "supabase_run_sql"
+  | "github_upsert_file"
+  | "supabase_update_workspace_orchestration_trace"
+  | "supabase_record_provisioning_trace";
 
 interface ToolRequestBody {
   tool: SupportedToolName;
@@ -109,6 +117,14 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
 async function runTool(body: ToolRequestBody): Promise<ToolResponse> {
   if (body.tool === "supabase_run_sql") {
     return supabaseRunSql(body.input as SupabaseRunSqlInput);
+  }
+
+  if (body.tool === "supabase_update_workspace_orchestration_trace") {
+    return supabaseUpdateWorkspaceOrchestrationTrace(body.input as SupabaseUpdateWorkspaceOrchestrationTraceInput);
+  }
+
+  if (body.tool === "supabase_record_provisioning_trace") {
+    return supabaseRecordProvisioningTrace(body.input as SupabaseRecordProvisioningTraceInput);
   }
 
   return githubUpsertFile(body.input as GithubUpsertFileInput);
@@ -313,7 +329,7 @@ async function orchestrateProvisionRespondeyaWeb(
   }
 
   const githubData = (githubResult.data ?? {}) as Record<string, unknown>;
-  const metadataPatch = {
+  const trace = {
     orchestrator_last_run_at: startedAt,
     orchestrator_status: "artifact_written",
     orchestrator_artifact_path: input.path,
@@ -323,16 +339,15 @@ async function orchestrateProvisionRespondeyaWeb(
       typeof githubData.contentSha === "string" ? githubData.contentSha : null,
     orchestrator_name: orchestrationName,
   };
-  const writeBackSql = `
-update public.client_workspaces
-set
-  metadata = coalesce(metadata, '{}'::jsonb) || ${JSON.stringify(metadataPatch)}::jsonb,
-  updated_at = now()
-where id = '${input.workspaceId}'::uuid
-returning id, status, metadata, updated_at;
-`.trim();
-  const writeBackResult = await supabaseRunSql({ sql: writeBackSql });
-  const step3 = normalizeStep("supabase_run_sql", writeBackResult);
+  const writeBackResult = await supabaseUpdateWorkspaceOrchestrationTrace({
+    workspaceId: input.workspaceId,
+    trace: {
+      ...trace,
+      orchestrator_artifact_commit_sha: trace.orchestrator_artifact_commit_sha ?? "",
+      orchestrator_artifact_content_sha: trace.orchestrator_artifact_content_sha ?? "",
+    },
+  });
+  const step3 = normalizeStep("supabase_update_workspace_orchestration_trace", writeBackResult);
 
   if (!writeBackResult.success) {
     return {
@@ -344,7 +359,7 @@ returning id, status, metadata, updated_at;
         steps: [step1, step2, step3],
         summary: "Step 1 succeeded; Step 2 succeeded; Step 3 failed; Step 4 not executed.",
       },
-      error: "supabase_run_sql failed",
+      error: "supabase_update_workspace_orchestration_trace failed",
     };
   }
 
@@ -361,7 +376,7 @@ returning id, status, metadata, updated_at;
   let step4: OrchestrationStep;
   if (!provisioningJobId) {
     step4 = {
-      tool: "supabase_run_sql",
+      tool: "supabase_record_provisioning_trace",
       success: true,
       message: "Skipped Step 4: provisioning_job_id was not found in workspace metadata (no-op)",
       data: {
@@ -371,66 +386,28 @@ returning id, status, metadata, updated_at;
       error: null,
     };
   } else {
-    const completedAt = new Date().toISOString();
-    const accountId = typeof workspace.account_id === "string" ? workspace.account_id : null;
-    const githubCommitSha = typeof githubData.commitSha === "string" ? githubData.commitSha : null;
-    const githubContentSha = typeof githubData.contentSha === "string" ? githubData.contentSha : null;
-    const step4Data = {
+    const accountId = typeof workspace.account_id === "string" ? workspace.account_id : "";
+    const step4Result = await supabaseRecordProvisioningTrace({
+      accountId,
       workspaceId: input.workspaceId,
-      orchestrator_name: orchestrationName,
-      artifact_path: input.path,
-      artifact_commit_sha: githubCommitSha,
-      artifact_content_sha: githubContentSha,
-      completed_at: completedAt,
-    };
-    const step4ResultPatch = {
-      workspaceId: input.workspaceId,
-      orchestrator_name: orchestrationName,
-      artifact_path: input.path,
-      artifact_commit_sha: githubCommitSha,
-      artifact_content_sha: githubContentSha,
-      last_orchestrated_at: completedAt,
-    };
-    const step4Sql = `
-/* provisioning_trace_write_back */
--- account_id: ${accountId ?? "null"}
--- job_id: ${provisioningJobId}
--- log_data: ${JSON.stringify(step4Data)}
--- job_result_patch: ${JSON.stringify(step4ResultPatch)}
-with inserted_log as (
-  insert into public.provisioning_job_logs (
-    account_id,
-    job_id,
-    step_code,
-    step_status,
-    message,
-    data
-  )
-  values (
-    ${accountId ? `'${accountId}'::uuid` : "null"},
-    '${provisioningJobId}'::uuid,
-    'orchestrate_provision_respondeya_web',
-    'completed',
-    'Workspace-aware orchestration completed',
-    '${JSON.stringify(step4Data)}'::jsonb
-  )
-  returning *
-),
-updated_job as (
-  update public.provisioning_jobs
-  set
-    current_step = 'orchestrator_trace_written',
-    updated_at = now(),
-    result = coalesce(result, '{}'::jsonb) || '${JSON.stringify(step4ResultPatch)}'::jsonb
-  where id = '${provisioningJobId}'::uuid
-  returning *
-)
-select
-  (select row_to_json(inserted_log) from inserted_log) as inserted_log,
-  (select row_to_json(updated_job) from updated_job) as updated_job;
-`.trim();
-    const step4Result = await supabaseRunSql({ sql: step4Sql });
-    step4 = normalizeStep("supabase_run_sql", step4Result);
+      provisioningJobId,
+      artifact: {
+        path: input.path,
+        commitSha: typeof githubData.commitSha === "string" ? githubData.commitSha : "",
+        contentSha: typeof githubData.contentSha === "string" ? githubData.contentSha : "",
+      },
+      orchestratorName: orchestrationName,
+      assistantId: typeof workspace.assistant_id === "string" ? workspace.assistant_id : null,
+      assistantVersionId:
+        typeof workspace.active_assistant_version_id === "string"
+          ? workspace.active_assistant_version_id
+          : null,
+      seededKnowledgeItems:
+        typeof workspaceMetadata.seeded_knowledge_items === "number"
+          ? workspaceMetadata.seeded_knowledge_items
+          : null,
+    });
+    step4 = normalizeStep("supabase_record_provisioning_trace", step4Result);
 
     if (!step4Result.success) {
       return {
@@ -442,7 +419,7 @@ select
           steps: [step1, step2, step3, step4],
           summary: "Step 1 succeeded; Step 2 succeeded; Step 3 succeeded; Step 4 failed.",
         },
-        error: "supabase_run_sql failed",
+        error: "supabase_record_provisioning_trace failed",
       };
     }
   }
@@ -477,7 +454,12 @@ const server = createServer(async (req, res) => {
 
     const toolBody = body as ToolRequestBody;
 
-    if (toolBody.tool !== "supabase_run_sql" && toolBody.tool !== "github_upsert_file") {
+    if (
+      toolBody.tool !== "supabase_run_sql" &&
+      toolBody.tool !== "github_upsert_file" &&
+      toolBody.tool !== "supabase_update_workspace_orchestration_trace" &&
+      toolBody.tool !== "supabase_record_provisioning_trace"
+    ) {
       jsonResponse(res, 400, {
         success: false,
         message: "Unsupported tool",
