@@ -1,6 +1,11 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { githubUpsertFile, type GithubUpsertFileInput } from "./tools/github.js";
-import { supabaseRunSql, type SupabaseRunSqlInput, type ToolResponse } from "./tools/supabase.js";
+import {
+  supabaseFetchWorkspace,
+  supabaseRunSql,
+  type SupabaseRunSqlInput,
+  type ToolResponse,
+} from "./tools/supabase.js";
 
 type SupportedToolName = "supabase_run_sql" | "github_upsert_file";
 
@@ -20,21 +25,13 @@ interface ProvisionRespondeyaWebRequestBody {
   path: string;
 }
 
-interface OrchestrateDemoStep {
-  tool: "supabase_run_sql" | "github_upsert_file";
-  success: boolean;
-  message: string;
-  data: unknown;
-  error: string | null;
-}
-
 interface OrchestrateDemoData {
-  steps: [OrchestrateDemoStep, OrchestrateDemoStep];
+  steps: OrchestrationStep[];
   summary: string;
 }
 
 interface OrchestrationStep {
-  tool: SupportedToolName;
+  tool: string;
   success: boolean;
   message: string;
   data: unknown;
@@ -43,6 +40,7 @@ interface OrchestrationStep {
 
 interface ProvisionRespondeyaWebData {
   workspaceId: string;
+  workspaceFound: boolean;
   steps: OrchestrationStep[];
   summary: string;
 }
@@ -117,7 +115,7 @@ async function runTool(body: ToolRequestBody): Promise<ToolResponse> {
 }
 
 function normalizeStep(
-  tool: SupportedToolName,
+  tool: string,
   response: ToolResponse,
 ): OrchestrationStep {
   return {
@@ -127,6 +125,22 @@ function normalizeStep(
     data: response.data,
     error: response.error,
   };
+}
+
+function toWorkspaceSummary(workspace: Record<string, unknown>): Record<string, unknown> {
+  const summaryKeys = ["id", "name", "slug", "status", "created_at", "updated_at"] as const;
+  const summary = summaryKeys.reduce<Record<string, unknown>>((acc, key) => {
+    if (workspace[key] !== undefined) {
+      acc[key] = workspace[key];
+    }
+    return acc;
+  }, {});
+
+  if (Object.keys(summary).length > 0) {
+    return summary;
+  }
+
+  return { id: workspace.id ?? null };
 }
 
 function validateOrchestrateDemoBody(body: unknown): string | null {
@@ -176,7 +190,7 @@ async function orchestrateDemo(input: OrchestrateDemoRequestBody): Promise<ToolR
   const step1 = normalizeStep("supabase_run_sql", supabaseResult);
 
   if (!supabaseResult.success) {
-    const step2: OrchestrateDemoStep = {
+    const step2: OrchestrationStep = {
       tool: "github_upsert_file",
       success: false,
       message: "Skipped because supabase_run_sql failed",
@@ -240,20 +254,42 @@ async function orchestrateProvisionRespondeyaWeb(
       message: "Provision orchestration failed",
       data: {
         workspaceId: input.workspaceId,
+        workspaceFound: false,
         steps: [step1],
-        summary: "Step 1 failed; Step 2 not executed.",
+        summary: "Step 1 failed; Steps 2-3 not executed.",
       },
       error: "supabase_run_sql failed",
     };
   }
 
+  const workspaceResult = await supabaseFetchWorkspace({ workspaceId: input.workspaceId });
+  const step2 = normalizeStep("supabase_fetch_workspace", workspaceResult);
+
+  if (!workspaceResult.success) {
+    const notFound = workspaceResult.message === "Workspace not found";
+    return {
+      success: false,
+      message: "Provision orchestration failed",
+      data: {
+        workspaceId: input.workspaceId,
+        workspaceFound: false,
+        steps: [step1, step2],
+        summary: notFound
+          ? "Step 1 succeeded; Step 2 failed (workspace not found); Step 3 not executed."
+          : "Step 1 succeeded; Step 2 failed; Step 3 not executed.",
+      },
+      error: notFound ? "workspace not found" : "supabase_fetch_workspace failed",
+    };
+  }
+
+  const workspaceSummary = toWorkspaceSummary(workspaceResult.data as Record<string, unknown>);
   const githubPayload = {
     workspaceId: input.workspaceId,
-    orchestration: orchestrationName,
+    orchestrationName,
     timestamp: new Date().toISOString(),
+    workspaceSummary,
+    healthResult: supabaseResult.data,
     status: "completed",
-    supabaseHealthResult: supabaseResult.data,
-    note: "This is the first business provisioning orchestration",
   };
 
   const githubResult = await githubUpsertFile({
@@ -262,17 +298,18 @@ async function orchestrateProvisionRespondeyaWeb(
     content: JSON.stringify(githubPayload, null, 2) + "\n",
     message: `chore: record ${orchestrationName} run for ${input.workspaceId}`,
   });
-  const step2 = normalizeStep("github_upsert_file", githubResult);
+  const step3 = normalizeStep("github_upsert_file", githubResult);
 
   return {
     success: githubResult.success,
     message: githubResult.success ? "Provision orchestration completed successfully" : "Provision orchestration failed",
     data: {
       workspaceId: input.workspaceId,
-      steps: [step1, step2],
+      workspaceFound: true,
+      steps: [step1, step2, step3],
       summary: githubResult.success
-        ? "Step 1 succeeded; Step 2 succeeded."
-        : "Step 1 succeeded; Step 2 failed.",
+        ? "Step 1 succeeded; Step 2 succeeded; Step 3 succeeded."
+        : "Step 1 succeeded; Step 2 succeeded; Step 3 failed.",
     },
     error: githubResult.success ? null : "github_upsert_file failed",
   };

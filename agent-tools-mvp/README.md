@@ -92,14 +92,16 @@ Future full orchestration is intended to live in SuperXavi. This repo remains th
 
 ## Business orchestration endpoint: `POST /orchestrate/provision-respondeya-web`
 
-`/orchestrate/provision-respondeya-web` is the first business-oriented orchestration for the RespondeYA / Enllaç ecosystem. It performs a deterministic 2-step flow:
+`/orchestrate/provision-respondeya-web` is the first business-oriented orchestration for the RespondeYA / Enllaç ecosystem. It performs a deterministic 3-step flow:
 1. Run `supabase_run_sql` with the existing `health_check` RPC behavior.
-2. If step 1 succeeds, run `github_upsert_file` to create/update a JSON provision run artifact.
+2. If step 1 succeeds, fetch the real workspace by `workspaceId` from Supabase (`/rest/v1/workspaces?...`).
+3. If the workspace exists, run `github_upsert_file` to create/update a JSON provision run artifact.
 
 Intended use:
 - Record a provisioning run tied to a concrete `workspaceId`.
-- Persist a lightweight JSON run artifact in a controlled GitHub path.
-- Keep orchestration execution deterministic and dependency-safe (`github_upsert_file` only runs after successful Supabase health check).
+- Validate and read a real workspace before writing any artifact.
+- Persist a lightweight JSON run artifact in a controlled GitHub path, including workspace summary + Supabase health result.
+- Keep orchestration execution deterministic and dependency-safe (`github_upsert_file` only runs after successful Supabase health check and successful workspace lookup).
 
 Request example:
 
@@ -119,12 +121,22 @@ Response example:
   "message": "Provision orchestration completed successfully",
   "data": {
     "workspaceId": "3f9eb145-3e63-4f1f-aad8-1b7f0f7523aa",
+    "workspaceFound": true,
     "steps": [
       {
         "tool": "supabase_run_sql",
         "success": true,
         "message": "Health check RPC executed successfully",
         "data": [{ "ok": true }],
+        "error": null
+      },
+      {
+        "tool": "supabase_fetch_workspace",
+        "success": true,
+        "message": "Workspace fetched successfully",
+        "data": {
+          "id": "3f9eb145-3e63-4f1f-aad8-1b7f0f7523aa"
+        },
         "error": null
       },
       {
@@ -138,7 +150,7 @@ Response example:
         "error": null
       }
     ],
-    "summary": "Step 1 succeeded; Step 2 succeeded."
+    "summary": "Step 1 succeeded; Step 2 succeeded; Step 3 succeeded."
   },
   "error": null
 }
