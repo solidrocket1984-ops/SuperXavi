@@ -94,7 +94,7 @@ Future full orchestration is intended to live in SuperXavi. This repo remains th
 
 `/orchestrate/provision-respondeya-web` is the first business-oriented orchestration for the RespondeYA / Enllaç ecosystem. It performs a deterministic 3-step flow:
 1. Run `supabase_run_sql` with the existing `health_check` RPC behavior.
-2. If step 1 succeeds, fetch the real workspace by `workspaceId` from Supabase (`/rest/v1/workspaces?...`).
+2. If step 1 succeeds, fetch the real workspace by `workspaceId` from Supabase (`public.client_workspaces` via `/rest/v1/client_workspaces?...`).
 3. If the workspace exists, run `github_upsert_file` to create/update a JSON provision run artifact.
 
 Intended use:
