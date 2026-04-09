@@ -90,6 +90,60 @@ Response example:
 
 Future full orchestration is intended to live in SuperXavi. This repo remains the execution layer with `/execute` as the main low-level interface.
 
+## Business orchestration endpoint: `POST /orchestrate/provision-respondeya-web`
+
+`/orchestrate/provision-respondeya-web` is the first business-oriented orchestration for the RespondeYA / Enllaç ecosystem. It performs a deterministic 2-step flow:
+1. Run `supabase_run_sql` with the existing `health_check` RPC behavior.
+2. If step 1 succeeds, run `github_upsert_file` to create/update a JSON provision run artifact.
+
+Intended use:
+- Record a provisioning run tied to a concrete `workspaceId`.
+- Persist a lightweight JSON run artifact in a controlled GitHub path.
+- Keep orchestration execution deterministic and dependency-safe (`github_upsert_file` only runs after successful Supabase health check).
+
+Request example:
+
+```json
+{
+  "workspaceId": "3f9eb145-3e63-4f1f-aad8-1b7f0f7523aa",
+  "repo": "SuperXavi",
+  "path": "agent-tools-mvp/docs/provision-runs/3f9eb145-3e63-4f1f-aad8-1b7f0f7523aa.json"
+}
+```
+
+Response example:
+
+```json
+{
+  "success": true,
+  "message": "Provision orchestration completed successfully",
+  "data": {
+    "workspaceId": "3f9eb145-3e63-4f1f-aad8-1b7f0f7523aa",
+    "steps": [
+      {
+        "tool": "supabase_run_sql",
+        "success": true,
+        "message": "Health check RPC executed successfully",
+        "data": [{ "ok": true }],
+        "error": null
+      },
+      {
+        "tool": "github_upsert_file",
+        "success": true,
+        "message": "File updated successfully",
+        "data": {
+          "commitSha": "abc123...",
+          "contentSha": "def456..."
+        },
+        "error": null
+      }
+    ],
+    "summary": "Step 1 succeeded; Step 2 succeeded."
+  },
+  "error": null
+}
+```
+
 ## Complete examples
 
 ### Example: `supabase_run_sql`
