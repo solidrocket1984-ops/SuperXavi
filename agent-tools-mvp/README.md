@@ -92,16 +92,20 @@ Future full orchestration is intended to live in SuperXavi. This repo remains th
 
 ## Business orchestration endpoint: `POST /orchestrate/provision-respondeya-web`
 
-`/orchestrate/provision-respondeya-web` is the first business-oriented orchestration for the RespondeYA / Enllaç ecosystem. It performs a deterministic 3-step flow:
-1. Validate `workspaceId` and fetch the real workspace by `workspaceId` from Supabase (`public.client_workspaces` via `/rest/v1/client_workspaces?...`).
+`/orchestrate/provision-respondeya-web` is the first business-oriented orchestration for the RespondeYA / Enllaç ecosystem. It performs a deterministic 4-step flow:
+1. Validate `workspaceId` and fetch the real workspace by `workspaceId` from Supabase (`public.client_workspaces` via `/rest/v1/client_workspaces?...`) including `account_id`, `project_id`, `metadata`, and `updated_at` (plus the existing workspace fields).
 2. If the workspace exists, run `github_upsert_file` to create/update a JSON provision run artifact.
 3. If the artifact write succeeds, run `supabase_run_sql` to update `public.client_workspaces` and merge orchestration trace fields into `metadata` (`orchestrator_last_run_at`, `orchestrator_status`, `orchestrator_artifact_path`, `orchestrator_artifact_commit_sha`, `orchestrator_artifact_content_sha`, `orchestrator_name`) and set `updated_at = now()`, returning `id`, `status`, `metadata`, and `updated_at`.
+4. Read `provisioning_job_id` from `workspace.metadata`:
+   - If missing, return a normalized successful skipped/no-op step result.
+   - If present, use `supabase_run_sql` to insert an operational trace row into `public.provisioning_job_logs` and update `public.provisioning_jobs` (`current_step`, `updated_at`, and merged `result` JSONB trace fields).
 
 Intended use:
 - Record a provisioning run tied to a concrete `workspaceId`.
 - Validate and read a real workspace before writing any artifact.
 - Persist a lightweight JSON run artifact in a controlled GitHub path, including workspace summary and orchestration metadata.
 - Record a real write-back trace in `public.client_workspaces.metadata` after artifact creation.
+- When `provisioning_job_id` is present in workspace metadata, record a real operational trace in `public.provisioning_job_logs` and update `public.provisioning_jobs`.
 - Keep orchestration execution deterministic and dependency-safe (`github_upsert_file` only runs after successful workspace lookup, and metadata write-back only runs after artifact success).
 
 Request example:

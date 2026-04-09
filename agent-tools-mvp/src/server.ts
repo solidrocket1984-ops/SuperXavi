@@ -130,6 +130,8 @@ function normalizeStep(
 function toWorkspaceSummary(workspace: Record<string, unknown>): Record<string, unknown> {
   const summaryKeys = [
     "id",
+    "account_id",
+    "project_id",
     "status",
     "company_name",
     "lead_id",
@@ -271,8 +273,8 @@ async function orchestrateProvisionRespondeyaWeb(
         workspaceFound: false,
         steps: [step1],
         summary: notFound
-          ? "Step 1 failed (workspace not found); Step 2 not executed; Step 3 not executed."
-          : "Step 1 failed; Step 2 not executed; Step 3 not executed.",
+          ? "Step 1 failed (workspace not found); Step 2 not executed; Step 3 not executed; Step 4 not executed."
+          : "Step 1 failed; Step 2 not executed; Step 3 not executed; Step 4 not executed.",
       },
       error: notFound ? "workspace not found" : "supabase_fetch_workspace failed",
     };
@@ -304,7 +306,7 @@ async function orchestrateProvisionRespondeyaWeb(
         workspaceId: input.workspaceId,
         workspaceFound: true,
         steps: [step1, step2],
-        summary: "Step 1 succeeded; Step 2 failed; Step 3 not executed.",
+        summary: "Step 1 succeeded; Step 2 failed; Step 3 not executed; Step 4 not executed.",
       },
       error: "github_upsert_file failed",
     };
@@ -340,10 +342,109 @@ returning id, status, metadata, updated_at;
         workspaceId: input.workspaceId,
         workspaceFound: true,
         steps: [step1, step2, step3],
-        summary: "Step 1 succeeded; Step 2 succeeded; Step 3 failed.",
+        summary: "Step 1 succeeded; Step 2 succeeded; Step 3 failed; Step 4 not executed.",
       },
       error: "supabase_run_sql failed",
     };
+  }
+
+  const workspace = (workspaceResult.data ?? {}) as Record<string, unknown>;
+  const workspaceMetadata =
+    workspace.metadata && typeof workspace.metadata === "object" && !Array.isArray(workspace.metadata)
+      ? (workspace.metadata as Record<string, unknown>)
+      : {};
+  const provisioningJobId =
+    typeof workspaceMetadata.provisioning_job_id === "string"
+      ? workspaceMetadata.provisioning_job_id.trim()
+      : "";
+
+  let step4: OrchestrationStep;
+  if (!provisioningJobId) {
+    step4 = {
+      tool: "supabase_run_sql",
+      success: true,
+      message: "Skipped Step 4: provisioning_job_id was not found in workspace metadata (no-op)",
+      data: {
+        skipped: true,
+        reason: "Missing provisioning_job_id in workspace.metadata",
+      },
+      error: null,
+    };
+  } else {
+    const completedAt = new Date().toISOString();
+    const accountId = typeof workspace.account_id === "string" ? workspace.account_id : null;
+    const githubCommitSha = typeof githubData.commitSha === "string" ? githubData.commitSha : null;
+    const githubContentSha = typeof githubData.contentSha === "string" ? githubData.contentSha : null;
+    const step4Data = {
+      workspaceId: input.workspaceId,
+      orchestrator_name: orchestrationName,
+      artifact_path: input.path,
+      artifact_commit_sha: githubCommitSha,
+      artifact_content_sha: githubContentSha,
+      completed_at: completedAt,
+    };
+    const step4ResultPatch = {
+      workspaceId: input.workspaceId,
+      orchestrator_name: orchestrationName,
+      artifact_path: input.path,
+      artifact_commit_sha: githubCommitSha,
+      artifact_content_sha: githubContentSha,
+      last_orchestrated_at: completedAt,
+    };
+    const step4Sql = `
+/* provisioning_trace_write_back */
+-- account_id: ${accountId ?? "null"}
+-- job_id: ${provisioningJobId}
+-- log_data: ${JSON.stringify(step4Data)}
+-- job_result_patch: ${JSON.stringify(step4ResultPatch)}
+with inserted_log as (
+  insert into public.provisioning_job_logs (
+    account_id,
+    job_id,
+    step_code,
+    step_status,
+    message,
+    data
+  )
+  values (
+    ${accountId ? `'${accountId}'::uuid` : "null"},
+    '${provisioningJobId}'::uuid,
+    'orchestrate_provision_respondeya_web',
+    'completed',
+    'Workspace-aware orchestration completed',
+    '${JSON.stringify(step4Data)}'::jsonb
+  )
+  returning *
+),
+updated_job as (
+  update public.provisioning_jobs
+  set
+    current_step = 'orchestrator_trace_written',
+    updated_at = now(),
+    result = coalesce(result, '{}'::jsonb) || '${JSON.stringify(step4ResultPatch)}'::jsonb
+  where id = '${provisioningJobId}'::uuid
+  returning *
+)
+select
+  (select row_to_json(inserted_log) from inserted_log) as inserted_log,
+  (select row_to_json(updated_job) from updated_job) as updated_job;
+`.trim();
+    const step4Result = await supabaseRunSql({ sql: step4Sql });
+    step4 = normalizeStep("supabase_run_sql", step4Result);
+
+    if (!step4Result.success) {
+      return {
+        success: false,
+        message: "Provision orchestration failed",
+        data: {
+          workspaceId: input.workspaceId,
+          workspaceFound: true,
+          steps: [step1, step2, step3, step4],
+          summary: "Step 1 succeeded; Step 2 succeeded; Step 3 succeeded; Step 4 failed.",
+        },
+        error: "supabase_run_sql failed",
+      };
+    }
   }
 
   return {
@@ -352,8 +453,8 @@ returning id, status, metadata, updated_at;
     data: {
       workspaceId: input.workspaceId,
       workspaceFound: true,
-      steps: [step1, step2, step3],
-      summary: "Step 1 succeeded; Step 2 succeeded; Step 3 succeeded.",
+      steps: [step1, step2, step3, step4],
+      summary: "Step 1 succeeded; Step 2 succeeded; Step 3 succeeded; Step 4 completed.",
     },
     error: null,
   };
