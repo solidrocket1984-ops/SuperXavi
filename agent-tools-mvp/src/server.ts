@@ -257,25 +257,8 @@ async function orchestrateProvisionRespondeyaWeb(
   input: ProvisionRespondeyaWebRequestBody,
 ): Promise<ToolResponse<ProvisionRespondeyaWebData>> {
   const orchestrationName = "provision-respondeya-web";
-  const supabaseResult = await supabaseRunSql({ sql: "select now() as server_time" });
-  const step1 = normalizeStep("supabase_run_sql", supabaseResult);
-
-  if (!supabaseResult.success) {
-    return {
-      success: false,
-      message: "Provision orchestration failed",
-      data: {
-        workspaceId: input.workspaceId,
-        workspaceFound: false,
-        steps: [step1],
-        summary: "Step 1 failed; Steps 2-3 not executed.",
-      },
-      error: "supabase_run_sql failed",
-    };
-  }
-
   const workspaceResult = await supabaseFetchWorkspace({ workspaceId: input.workspaceId });
-  const step2 = normalizeStep("supabase_fetch_workspace", workspaceResult);
+  const step1 = normalizeStep("supabase_fetch_workspace", workspaceResult);
 
   if (!workspaceResult.success) {
     const notFound = workspaceResult.message === "Workspace not found";
@@ -285,10 +268,10 @@ async function orchestrateProvisionRespondeyaWeb(
       data: {
         workspaceId: input.workspaceId,
         workspaceFound: false,
-        steps: [step1, step2],
+        steps: [step1],
         summary: notFound
-          ? "Step 1 succeeded; Step 2 failed (workspace not found); Step 3 not executed."
-          : "Step 1 succeeded; Step 2 failed; Step 3 not executed.",
+          ? "Step 1 failed (workspace not found); Step 2 not executed."
+          : "Step 1 failed; Step 2 not executed.",
       },
       error: notFound ? "workspace not found" : "supabase_fetch_workspace failed",
     };
@@ -300,8 +283,8 @@ async function orchestrateProvisionRespondeyaWeb(
     orchestrationName,
     timestamp: new Date().toISOString(),
     workspaceSummary,
-    healthResult: supabaseResult.data,
     status: "completed",
+    note: "Real workspace-aware provisioning orchestration using public.client_workspaces as the first execution step.",
   };
 
   const githubResult = await githubUpsertFile({
@@ -310,7 +293,7 @@ async function orchestrateProvisionRespondeyaWeb(
     content: JSON.stringify(githubPayload, null, 2) + "\n",
     message: `chore: record ${orchestrationName} run for ${input.workspaceId}`,
   });
-  const step3 = normalizeStep("github_upsert_file", githubResult);
+  const step2 = normalizeStep("github_upsert_file", githubResult);
 
   return {
     success: githubResult.success,
@@ -318,10 +301,10 @@ async function orchestrateProvisionRespondeyaWeb(
     data: {
       workspaceId: input.workspaceId,
       workspaceFound: true,
-      steps: [step1, step2, step3],
+      steps: [step1, step2],
       summary: githubResult.success
-        ? "Step 1 succeeded; Step 2 succeeded; Step 3 succeeded."
-        : "Step 1 succeeded; Step 2 succeeded; Step 3 failed.",
+        ? "Step 1 succeeded; Step 2 succeeded."
+        : "Step 1 succeeded; Step 2 failed.",
     },
     error: githubResult.success ? null : "github_upsert_file failed",
   };
