@@ -257,6 +257,7 @@ async function orchestrateProvisionRespondeyaWeb(
   input: ProvisionRespondeyaWebRequestBody,
 ): Promise<ToolResponse<ProvisionRespondeyaWebData>> {
   const orchestrationName = "provision-respondeya-web";
+  const startedAt = new Date().toISOString();
   const workspaceResult = await supabaseFetchWorkspace({ workspaceId: input.workspaceId });
   const step1 = normalizeStep("supabase_fetch_workspace", workspaceResult);
 
@@ -270,8 +271,8 @@ async function orchestrateProvisionRespondeyaWeb(
         workspaceFound: false,
         steps: [step1],
         summary: notFound
-          ? "Step 1 failed (workspace not found); Step 2 not executed."
-          : "Step 1 failed; Step 2 not executed.",
+          ? "Step 1 failed (workspace not found); Step 2 not executed; Step 3 not executed."
+          : "Step 1 failed; Step 2 not executed; Step 3 not executed.",
       },
       error: notFound ? "workspace not found" : "supabase_fetch_workspace failed",
     };
@@ -281,7 +282,7 @@ async function orchestrateProvisionRespondeyaWeb(
   const githubPayload = {
     workspaceId: input.workspaceId,
     orchestrationName,
-    timestamp: new Date().toISOString(),
+    timestamp: startedAt,
     workspaceSummary,
     status: "completed",
     note: "Real workspace-aware provisioning orchestration using public.client_workspaces as the first execution step.",
@@ -295,18 +296,66 @@ async function orchestrateProvisionRespondeyaWeb(
   });
   const step2 = normalizeStep("github_upsert_file", githubResult);
 
+  if (!githubResult.success) {
+    return {
+      success: false,
+      message: "Provision orchestration failed",
+      data: {
+        workspaceId: input.workspaceId,
+        workspaceFound: true,
+        steps: [step1, step2],
+        summary: "Step 1 succeeded; Step 2 failed; Step 3 not executed.",
+      },
+      error: "github_upsert_file failed",
+    };
+  }
+
+  const githubData = (githubResult.data ?? {}) as Record<string, unknown>;
+  const metadataPatch = {
+    orchestrator_last_run_at: startedAt,
+    orchestrator_status: "artifact_written",
+    orchestrator_artifact_path: input.path,
+    orchestrator_artifact_commit_sha:
+      typeof githubData.commitSha === "string" ? githubData.commitSha : null,
+    orchestrator_artifact_content_sha:
+      typeof githubData.contentSha === "string" ? githubData.contentSha : null,
+    orchestrator_name: orchestrationName,
+  };
+  const writeBackSql = `
+update public.client_workspaces
+set
+  metadata = coalesce(metadata, '{}'::jsonb) || ${JSON.stringify(metadataPatch)}::jsonb,
+  updated_at = now()
+where id = '${input.workspaceId}'::uuid
+returning id, status, metadata, updated_at;
+`.trim();
+  const writeBackResult = await supabaseRunSql({ sql: writeBackSql });
+  const step3 = normalizeStep("supabase_run_sql", writeBackResult);
+
+  if (!writeBackResult.success) {
+    return {
+      success: false,
+      message: "Provision orchestration failed",
+      data: {
+        workspaceId: input.workspaceId,
+        workspaceFound: true,
+        steps: [step1, step2, step3],
+        summary: "Step 1 succeeded; Step 2 succeeded; Step 3 failed.",
+      },
+      error: "supabase_run_sql failed",
+    };
+  }
+
   return {
-    success: githubResult.success,
-    message: githubResult.success ? "Provision orchestration completed successfully" : "Provision orchestration failed",
+    success: true,
+    message: "Provision orchestration completed successfully",
     data: {
       workspaceId: input.workspaceId,
       workspaceFound: true,
-      steps: [step1, step2],
-      summary: githubResult.success
-        ? "Step 1 succeeded; Step 2 succeeded."
-        : "Step 1 succeeded; Step 2 failed.",
+      steps: [step1, step2, step3],
+      summary: "Step 1 succeeded; Step 2 succeeded; Step 3 succeeded.",
     },
-    error: githubResult.success ? null : "github_upsert_file failed",
+    error: null,
   };
 }
 

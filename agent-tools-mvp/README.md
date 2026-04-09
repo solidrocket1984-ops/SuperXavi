@@ -67,7 +67,7 @@ Response example:
       {
         "tool": "supabase_run_sql",
         "success": true,
-        "message": "Health check RPC executed successfully",
+        "message": "SQL RPC executed successfully",
         "data": [{ "ok": true }],
         "error": null
       },
@@ -95,13 +95,14 @@ Future full orchestration is intended to live in SuperXavi. This repo remains th
 `/orchestrate/provision-respondeya-web` is the first business-oriented orchestration for the RespondeYA / Enllaç ecosystem. It performs a deterministic 3-step flow:
 1. Validate `workspaceId` and fetch the real workspace by `workspaceId` from Supabase (`public.client_workspaces` via `/rest/v1/client_workspaces?...`).
 2. If the workspace exists, run `github_upsert_file` to create/update a JSON provision run artifact.
-3. Return a normalized orchestration response.
+3. If the artifact write succeeds, run `supabase_run_sql` to update `public.client_workspaces` and merge orchestration trace fields into `metadata` (`orchestrator_last_run_at`, `orchestrator_status`, `orchestrator_artifact_path`, `orchestrator_artifact_commit_sha`, `orchestrator_artifact_content_sha`, `orchestrator_name`) and set `updated_at = now()`, returning `id`, `status`, `metadata`, and `updated_at`.
 
 Intended use:
 - Record a provisioning run tied to a concrete `workspaceId`.
 - Validate and read a real workspace before writing any artifact.
 - Persist a lightweight JSON run artifact in a controlled GitHub path, including workspace summary and orchestration metadata.
-- Keep orchestration execution deterministic and dependency-safe (`github_upsert_file` only runs after successful workspace lookup).
+- Record a real write-back trace in `public.client_workspaces.metadata` after artifact creation.
+- Keep orchestration execution deterministic and dependency-safe (`github_upsert_file` only runs after successful workspace lookup, and metadata write-back only runs after artifact success).
 
 Request example:
 
@@ -141,9 +142,25 @@ Response example:
           "contentSha": "def456..."
         },
         "error": null
+      },
+      {
+        "tool": "supabase_run_sql",
+        "success": true,
+        "message": "Health check RPC executed successfully",
+        "data": [
+          {
+            "id": "3f9eb145-3e63-4f1f-aad8-1b7f0f7523aa",
+            "status": "active",
+            "metadata": {
+              "orchestrator_status": "artifact_written"
+            },
+            "updated_at": "2026-01-01T00:00:00.000Z"
+          }
+        ],
+        "error": null
       }
     ],
-    "summary": "Step 1 succeeded; Step 2 succeeded."
+    "summary": "Step 1 succeeded; Step 2 succeeded; Step 3 succeeded."
   },
   "error": null
 }
@@ -208,7 +225,7 @@ Example response:
 
 ## Tool catalog
 
-- `supabase_run_sql`: validates input and executes a controlled Supabase `health_check` RPC call (sandbox-only guardrails).
+- `supabase_run_sql`: validates input, attempts a controlled Supabase SQL RPC call with the provided `sql`, and preserves sandbox guardrails.
   - Required env: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_SANDBOX_PROJECT_REF`
 - `github_upsert_file`: creates or updates a file in an allowlisted GitHub repository via the GitHub Contents API.
   - Required env: `GITHUB_OWNER`, `GITHUB_TOKEN`, `GITHUB_ALLOWED_REPOS` (comma-separated)
