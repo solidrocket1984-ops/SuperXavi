@@ -1,9 +1,11 @@
 {
   "workspaceId": "3cbd0059-5347-4e9c-acbc-3b3752dfd517",
   "orchestrationName": "provision-respondeya-web",
-  "timestamp": "2026-04-09T20:38:23.857Z",
+  "timestamp": "2026-04-09T20:49:27.988Z",
   "workspaceSummary": {
     "id": "3cbd0059-5347-4e9c-acbc-3b3752dfd517",
+    "account_id": "8d97e18a-9029-4167-b1e8-e5889067ef22",
+    "project_id": "324fbaaa-ef07-42d1-9e67-680458c0f5b0",
     "status": "qa",
     "company_name": "Vilafranca Vitalis Beauty (SOMA)",
     "lead_id": "8db6ef4d-3026-4c63-94ff-67905bdf28c2",
@@ -26,12 +28,12 @@
       "orchestrator_status": "artifact_written",
       "provisioning_job_id": "bea9f968-f2cd-4fee-9de2-5ce3fcf11748",
       "seeded_knowledge_items": 3,
-      "orchestrator_last_run_at": "2026-04-09T20:38:16.688Z",
+      "orchestrator_last_run_at": "2026-04-09T20:38:23.857Z",
       "orchestrator_artifact_path": "agent-tools-mvp/docs/provision-runs/3cbd0059-5347-4e9c-acbc-3b3752dfd517.json",
-      "orchestrator_artifact_commit_sha": "79edb4c62b803d0b73689addc79340241f99edf8",
-      "orchestrator_artifact_content_sha": "63e3fb7899b3a52b5d5b86df3ecee81c6650180a"
+      "orchestrator_artifact_commit_sha": "dd609760f99ce109d9e78a866b19f227286a0481",
+      "orchestrator_artifact_content_sha": "51600fa2a3e42c7b96ba4a0ee0139d1704f88f2f"
     },
-    "updated_at": "2026-04-09T20:38:18.039591+00:00"
+    "updated_at": "2026-04-09T20:38:25.666161+00:00"
   },
   "status": "completed",
   "note": "Real workspace-aware provisioning orchestration using public.client_workspaces as the first execution step."
