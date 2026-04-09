@@ -1,0 +1,32 @@
+{
+  "workspaceId": "3cbd0059-5347-4e9c-acbc-3b3752dfd517",
+  "orchestrationName": "provision-respondeya-web",
+  "timestamp": "2026-04-09T20:23:50.054Z",
+  "workspaceSummary": {
+    "id": "3cbd0059-5347-4e9c-acbc-3b3752dfd517",
+    "status": "qa",
+    "company_name": "Vilafranca Vitalis Beauty (SOMA)",
+    "lead_id": "8db6ef4d-3026-4c63-94ff-67905bdf28c2",
+    "product_id": "dd102f71-60ed-4f64-8eb5-17a8b2ea414f",
+    "selected_plan": "RespondeYA Web",
+    "selected_modules": [
+      "web_chat",
+      "lead_capture",
+      "dashboard_basic"
+    ],
+    "assistant_id": "66e37d4c-7025-4394-87b1-9372a87f9b92",
+    "active_assistant_version_id": "df32d3d4-d213-48e1-b04e-eae3819e6269",
+    "metadata": {
+      "lead_id": "8db6ef4d-3026-4c63-94ff-67905bdf28c2",
+      "lead_status": "new",
+      "created_from": "lead",
+      "product_code": "respondeya_web",
+      "product_ready": true,
+      "provisioning_job_id": "bea9f968-f2cd-4fee-9de2-5ce3fcf11748",
+      "seeded_knowledge_items": 3
+    },
+    "updated_at": "2026-04-09T14:33:06.541674+00:00"
+  },
+  "status": "completed",
+  "note": "Real workspace-aware provisioning orchestration using public.client_workspaces as the first execution step."
+}
