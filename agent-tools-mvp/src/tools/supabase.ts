@@ -92,6 +92,33 @@ function getSupabaseConfig(): { supabaseUrl: string; serviceRoleKey: string } {
   return { supabaseUrl, serviceRoleKey };
 }
 
+function extractWorkspaceFromResponseBody(parsedBody: unknown): WorkspaceRecord | null {
+  if (Array.isArray(parsedBody)) {
+    const firstRow = parsedBody[0];
+    if (firstRow && typeof firstRow === "object" && !Array.isArray(firstRow)) {
+      return firstRow as WorkspaceRecord;
+    }
+    return null;
+  }
+
+  if (parsedBody && typeof parsedBody === "object" && !Array.isArray(parsedBody)) {
+    if ("data" in parsedBody) {
+      const nestedData = (parsedBody as { data?: unknown }).data;
+      if (Array.isArray(nestedData)) {
+        const firstNestedRow = nestedData[0];
+        if (firstNestedRow && typeof firstNestedRow === "object" && !Array.isArray(firstNestedRow)) {
+          return firstNestedRow as WorkspaceRecord;
+        }
+        return null;
+      }
+    }
+
+    return parsedBody as WorkspaceRecord;
+  }
+
+  return null;
+}
+
 async function updateClientWorkspaceTrace(
   supabaseUrl: string,
   serviceRoleKey: string,
@@ -538,7 +565,7 @@ export async function supabaseFetchWorkspace(
       };
     }
 
-    if (!Array.isArray(parsedBody)) {
+    if (!Array.isArray(parsedBody) && !(parsedBody && typeof parsedBody === "object")) {
       return {
         success: false,
         message: "Workspace lookup failed",
@@ -547,7 +574,7 @@ export async function supabaseFetchWorkspace(
       };
     }
 
-    const workspace = (parsedBody[0] as WorkspaceRecord | undefined) ?? null;
+    const workspace = extractWorkspaceFromResponseBody(parsedBody);
     if (!workspace) {
       return {
         success: false,
