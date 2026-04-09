@@ -1,7 +1,7 @@
 {
   "workspaceId": "3cbd0059-5347-4e9c-acbc-3b3752dfd517",
   "orchestrationName": "provision-respondeya-web",
-  "timestamp": "2026-04-09T20:38:11.453Z",
+  "timestamp": "2026-04-09T20:38:16.688Z",
   "workspaceSummary": {
     "id": "3cbd0059-5347-4e9c-acbc-3b3752dfd517",
     "status": "qa",
@@ -22,10 +22,16 @@
       "created_from": "lead",
       "product_code": "respondeya_web",
       "product_ready": true,
+      "orchestrator_name": "provision-respondeya-web",
+      "orchestrator_status": "artifact_written",
       "provisioning_job_id": "bea9f968-f2cd-4fee-9de2-5ce3fcf11748",
-      "seeded_knowledge_items": 3
+      "seeded_knowledge_items": 3,
+      "orchestrator_last_run_at": "2026-04-09T20:38:11.453Z",
+      "orchestrator_artifact_path": "agent-tools-mvp/docs/provision-runs/3cbd0059-5347-4e9c-acbc-3b3752dfd517.json",
+      "orchestrator_artifact_commit_sha": "9e7bc03a28b26c0fdd74cc9e31c64cf8182ac165",
+      "orchestrator_artifact_content_sha": "d83996c9ff99e1cb98f28632d6fe25f85e70451c"
     },
-    "updated_at": "2026-04-09T14:33:06.541674+00:00"
+    "updated_at": "2026-04-09T20:38:13.066697+00:00"
   },
   "status": "completed",
   "note": "Real workspace-aware provisioning orchestration using public.client_workspaces as the first execution step."
