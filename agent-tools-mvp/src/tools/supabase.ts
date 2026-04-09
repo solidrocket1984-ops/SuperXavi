@@ -8,6 +8,33 @@ export interface SupabaseFetchWorkspaceInput {
   workspaceId: string;
 }
 
+export interface SupabaseUpdateWorkspaceOrchestrationTraceInput {
+  workspaceId: string;
+  trace: {
+    orchestrator_last_run_at: string;
+    orchestrator_status: string;
+    orchestrator_artifact_path: string;
+    orchestrator_artifact_commit_sha: string;
+    orchestrator_artifact_content_sha: string;
+    orchestrator_name: string;
+  };
+}
+
+export interface SupabaseRecordProvisioningTraceInput {
+  accountId: string;
+  workspaceId: string;
+  provisioningJobId: string;
+  artifact: {
+    path: string;
+    commitSha: string;
+    contentSha: string;
+  };
+  orchestratorName: string;
+  assistantId: string | null;
+  assistantVersionId: string | null;
+  seededKnowledgeItems: number | null;
+}
+
 export interface ToolResponse<TData = unknown> {
   success: boolean;
   message: string;
@@ -20,6 +47,7 @@ interface PgQueryResponseRow {
 }
 
 type WorkspaceRecord = Record<string, unknown>;
+type ProvisioningTraceRecord = { inserted_log: Record<string, unknown> | null; updated_job: Record<string, unknown> | null };
 
 const proxyAgent = new EnvHttpProxyAgent();
 
@@ -64,75 +92,11 @@ function getSupabaseConfig(): { supabaseUrl: string; serviceRoleKey: string } {
   return { supabaseUrl, serviceRoleKey };
 }
 
-interface ClientWorkspaceTraceUpdateRequest {
-  workspaceId: string;
-  metadataPatch: Record<string, unknown>;
-}
-
-interface ProvisioningTraceWriteRequest {
-  accountId: string | null;
-  jobId: string;
-  logData: Record<string, unknown>;
-  jobResultPatch: Record<string, unknown>;
-}
-
-function tryParseClientWorkspaceTraceUpdateSql(sql: string): ClientWorkspaceTraceUpdateRequest | null {
-  const normalized = sql.trim().replace(/\s+/g, " ").toLowerCase();
-  if (!normalized.startsWith("update public.client_workspaces")) {
-    return null;
-  }
-
-  const workspaceIdMatch = sql.match(/where\s+id\s*=\s*'([0-9a-f-]{36})'::uuid/i);
-  const metadataPatchMatch = sql.match(
-    /metadata\s*=\s*coalesce\(\s*metadata\s*,\s*'\{\}'::jsonb\s*\)\s*\|\|\s*(\{[\s\S]*?\})::jsonb/i,
-  );
-  if (!workspaceIdMatch || !metadataPatchMatch) {
-    return null;
-  }
-
-  try {
-    const metadataPatch = JSON.parse(metadataPatchMatch[1]) as Record<string, unknown>;
-    return {
-      workspaceId: workspaceIdMatch[1],
-      metadataPatch,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function tryParseProvisioningTraceWriteSql(sql: string): ProvisioningTraceWriteRequest | null {
-  if (!sql.includes("/* provisioning_trace_write_back */")) {
-    return null;
-  }
-
-  const accountIdMatch = sql.match(/--\s*account_id:\s*(.+)/i);
-  const jobIdMatch = sql.match(/--\s*job_id:\s*([0-9a-f-]{36})/i);
-  const logDataMatch = sql.match(/--\s*log_data:\s*(\{[^\n]*\})/i);
-  const jobResultPatchMatch = sql.match(/--\s*job_result_patch:\s*(\{[^\n]*\})/i);
-  if (!accountIdMatch || !jobIdMatch || !logDataMatch || !jobResultPatchMatch) {
-    return null;
-  }
-
-  const rawAccountId = accountIdMatch[1].trim();
-  const accountId = rawAccountId.toLowerCase() === "null" ? null : rawAccountId;
-  try {
-    return {
-      accountId,
-      jobId: jobIdMatch[1],
-      logData: JSON.parse(logDataMatch[1]) as Record<string, unknown>,
-      jobResultPatch: JSON.parse(jobResultPatchMatch[1]) as Record<string, unknown>,
-    };
-  } catch {
-    return null;
-  }
-}
-
-async function executeClientWorkspaceTraceUpdate(
+async function updateClientWorkspaceTrace(
   supabaseUrl: string,
   serviceRoleKey: string,
-  request: ClientWorkspaceTraceUpdateRequest,
-): Promise<ToolResponse<PgQueryResponseRow[]>> {
+  request: SupabaseUpdateWorkspaceOrchestrationTraceInput,
+): Promise<ToolResponse<WorkspaceRecord>> {
   const headers = {
     "content-type": "application/json",
     apikey: serviceRoleKey,
@@ -164,7 +128,7 @@ async function executeClientWorkspaceTraceUpdate(
   if (!Array.isArray(fetchParsedBody) || fetchParsedBody.length === 0) {
     return {
       success: false,
-      message: "Supabase RPC failed",
+      message: "Workspace trace update failed",
       data: null,
       error: "Workspace not found for metadata write-back",
     };
@@ -174,7 +138,7 @@ async function executeClientWorkspaceTraceUpdate(
     row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
       ? (row.metadata as Record<string, unknown>)
       : {};
-  const mergedMetadata = { ...existingMetadata, ...request.metadataPatch };
+  const mergedMetadata = { ...existingMetadata, ...request.trace };
 
   const updateResponse = await undiciFetch(`${basePath}?${rowFilter}&select=${selectFields}`, {
     dispatcher: proxyAgent,
@@ -197,27 +161,28 @@ async function executeClientWorkspaceTraceUpdate(
         : JSON.stringify(updateParsedBody) || `HTTP ${updateResponse.status}`;
     return {
       success: false,
-      message: "Supabase RPC failed",
+      message: "Workspace trace update failed",
       data: null,
       error: errorText,
     };
   }
-  const payload = Array.isArray(updateParsedBody)
-    ? (updateParsedBody as PgQueryResponseRow[])
-    : ([updateParsedBody] as PgQueryResponseRow[]);
+  const payload =
+    Array.isArray(updateParsedBody) && updateParsedBody.length > 0
+      ? (updateParsedBody[0] as WorkspaceRecord)
+      : (updateParsedBody as WorkspaceRecord);
   return {
     success: true,
-    message: "SQL emulation executed successfully",
+    message: "Workspace orchestration trace updated successfully",
     data: payload,
     error: null,
   };
 }
 
-async function executeProvisioningTraceWrite(
+async function recordProvisioningTrace(
   supabaseUrl: string,
   serviceRoleKey: string,
-  request: ProvisioningTraceWriteRequest,
-): Promise<ToolResponse<PgQueryResponseRow[]>> {
+  request: SupabaseRecordProvisioningTraceInput,
+): Promise<ToolResponse<ProvisioningTraceRecord>> {
   const headers = {
     "content-type": "application/json",
     apikey: serviceRoleKey,
@@ -234,11 +199,21 @@ async function executeProvisioningTraceWrite(
     },
     body: JSON.stringify({
       account_id: request.accountId,
-      job_id: request.jobId,
+      job_id: request.provisioningJobId,
       step_code: "orchestrate_provision_respondeya_web",
       step_status: "completed",
       message: "Workspace-aware orchestration completed",
-      data: request.logData,
+      data: {
+        workspaceId: request.workspaceId,
+        orchestrator_name: request.orchestratorName,
+        artifact_path: request.artifact.path,
+        artifact_commit_sha: request.artifact.commitSha,
+        artifact_content_sha: request.artifact.contentSha,
+        assistant_id: request.assistantId,
+        assistant_version_id: request.assistantVersionId,
+        seeded_knowledge_items: request.seededKnowledgeItems,
+        completed_at: new Date().toISOString(),
+      },
     }),
   });
   const insertedLogRawBody = await insertedLogResponse.text();
@@ -261,7 +236,7 @@ async function executeProvisioningTraceWrite(
       : null;
 
   const fetchJobResponse = await undiciFetch(
-    `${supabaseUrl}/rest/v1/provisioning_jobs?id=eq.${encodeURIComponent(request.jobId)}&select=*`,
+    `${supabaseUrl}/rest/v1/provisioning_jobs?id=eq.${encodeURIComponent(request.provisioningJobId)}&select=*`,
     {
       dispatcher: proxyAgent,
       method: "GET",
@@ -277,7 +252,7 @@ async function executeProvisioningTraceWrite(
         : JSON.stringify(fetchJobParsedBody) || `HTTP ${fetchJobResponse.status}`;
     return {
       success: false,
-      message: "Supabase RPC failed",
+      message: "Provisioning trace write failed",
       data: null,
       error: errorText,
     };
@@ -285,7 +260,7 @@ async function executeProvisioningTraceWrite(
   if (!Array.isArray(fetchJobParsedBody) || fetchJobParsedBody.length === 0) {
     return {
       success: false,
-      message: "Supabase RPC failed",
+      message: "Provisioning trace write failed",
       data: null,
       error: "Provisioning job not found for update",
     };
@@ -295,10 +270,21 @@ async function executeProvisioningTraceWrite(
     jobRow.result && typeof jobRow.result === "object" && !Array.isArray(jobRow.result)
       ? (jobRow.result as Record<string, unknown>)
       : {};
-  const mergedResult = { ...existingResult, ...request.jobResultPatch };
+  const mergedResult = {
+    ...existingResult,
+    workspaceId: request.workspaceId,
+    orchestrator_name: request.orchestratorName,
+    artifact_path: request.artifact.path,
+    artifact_commit_sha: request.artifact.commitSha,
+    artifact_content_sha: request.artifact.contentSha,
+    assistant_id: request.assistantId,
+    assistant_version_id: request.assistantVersionId,
+    seeded_knowledge_items: request.seededKnowledgeItems,
+    last_orchestrated_at: new Date().toISOString(),
+  };
 
   const updatedJobResponse = await undiciFetch(
-    `${supabaseUrl}/rest/v1/provisioning_jobs?id=eq.${encodeURIComponent(request.jobId)}&select=*`,
+    `${supabaseUrl}/rest/v1/provisioning_jobs?id=eq.${encodeURIComponent(request.provisioningJobId)}&select=*`,
     {
       dispatcher: proxyAgent,
       method: "PATCH",
@@ -322,7 +308,7 @@ async function executeProvisioningTraceWrite(
         : JSON.stringify(updatedJobParsedBody) || `HTTP ${updatedJobResponse.status}`;
     return {
       success: false,
-      message: "Supabase RPC failed",
+      message: "Provisioning trace write failed",
       data: null,
       error: errorText,
     };
@@ -334,10 +320,80 @@ async function executeProvisioningTraceWrite(
 
   return {
     success: true,
-    message: "SQL emulation executed successfully",
-    data: [{ inserted_log: insertedLog, updated_job: updatedJob }],
+    message: "Provisioning trace recorded successfully",
+    data: { inserted_log: insertedLog, updated_job: updatedJob },
     error: null,
   };
+}
+
+export async function supabaseUpdateWorkspaceOrchestrationTrace(
+  input: SupabaseUpdateWorkspaceOrchestrationTraceInput,
+): Promise<ToolResponse<WorkspaceRecord>> {
+  if (!input?.workspaceId || typeof input.workspaceId !== "string" || input.workspaceId.trim() === "") {
+    return {
+      success: false,
+      message: "Validation failed",
+      data: null,
+      error: "Input must include a non-empty workspaceId string",
+    };
+  }
+  if (!input.trace || typeof input.trace !== "object") {
+    return {
+      success: false,
+      message: "Validation failed",
+      data: null,
+      error: "Input must include a trace object",
+    };
+  }
+
+  try {
+    const { supabaseUrl, serviceRoleKey } = getSupabaseConfig();
+    return await updateClientWorkspaceTrace(supabaseUrl, serviceRoleKey, {
+      workspaceId: input.workspaceId.trim(),
+      trace: input.trace,
+    });
+  } catch (error) {
+    return {
+      success: false,
+      message: "Workspace trace update failed",
+      data: null,
+      error: error instanceof Error ? error.message : "Unknown error",
+    };
+  }
+}
+
+export async function supabaseRecordProvisioningTrace(
+  input: SupabaseRecordProvisioningTraceInput,
+): Promise<ToolResponse<ProvisioningTraceRecord>> {
+  if (
+    !input?.accountId ||
+    !input.workspaceId ||
+    !input.provisioningJobId ||
+    !input.artifact?.path ||
+    !input.artifact?.commitSha ||
+    !input.artifact?.contentSha ||
+    !input.orchestratorName
+  ) {
+    return {
+      success: false,
+      message: "Validation failed",
+      data: null,
+      error:
+        "Input must include accountId, workspaceId, provisioningJobId, artifact.path, artifact.commitSha, artifact.contentSha, and orchestratorName",
+    };
+  }
+
+  try {
+    const { supabaseUrl, serviceRoleKey } = getSupabaseConfig();
+    return await recordProvisioningTrace(supabaseUrl, serviceRoleKey, input);
+  } catch (error) {
+    return {
+      success: false,
+      message: "Provisioning trace write failed",
+      data: null,
+      error: error instanceof Error ? error.message : "Unknown error",
+    };
+  }
 }
 
 export async function supabaseRunSql(
@@ -396,16 +452,6 @@ export async function supabaseRunSql(
         data: null,
         error: runSqlErrorText || `HTTP ${runSqlResponse.status}`,
       };
-    }
-
-    const traceUpdateRequest = tryParseClientWorkspaceTraceUpdateSql(input.sql);
-    if (traceUpdateRequest) {
-      return executeClientWorkspaceTraceUpdate(supabaseUrl, serviceRoleKey, traceUpdateRequest);
-    }
-
-    const provisioningTraceWriteRequest = tryParseProvisioningTraceWriteSql(input.sql);
-    if (provisioningTraceWriteRequest) {
-      return executeProvisioningTraceWrite(supabaseUrl, serviceRoleKey, provisioningTraceWriteRequest);
     }
 
     const healthCheckResponse = await undiciFetch(`${supabaseUrl}/rest/v1/rpc/health_check`, {
